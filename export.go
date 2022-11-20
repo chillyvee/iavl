@@ -2,6 +2,7 @@ package iavl
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pkg/errors"
 )
@@ -36,6 +37,15 @@ type Exporter struct {
 
 // NewExporter creates a new Exporter. Callers must call Close() when done.
 func newExporter(tree *ImmutableTree) *Exporter {
+	if tree == nil {
+		return nil
+	}
+	// CV Prevent crash on incrVersionReaders if tree.ndb == nil
+	if tree.ndb == nil {
+		fmt.Printf("iavl/export newExporter failed to create because tree.ndb is nil\n")
+		return nil
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	exporter := &Exporter{
 		tree:   tree,
