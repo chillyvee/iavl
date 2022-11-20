@@ -2,6 +2,7 @@ package iavl
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pkg/errors"
 )
@@ -36,6 +37,10 @@ type Exporter struct {
 
 // NewExporter creates a new Exporter. Callers must call Close() when done.
 func newExporter(tree *ImmutableTree) *Exporter {
+	if tree == nil {
+		return nil
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	exporter := &Exporter{
 		tree:   tree,
@@ -43,7 +48,12 @@ func newExporter(tree *ImmutableTree) *Exporter {
 		cancel: cancel,
 	}
 
-	tree.ndb.incrVersionReaders(tree.version)
+	// CV Prevent crash on incrVersionReaders if tree.ndb == nil (happens when  ree.root = nil)
+	if tree.ndb != nil {
+		tree.ndb.incrVersionReaders(tree.version)
+	} else {
+		fmt.Printf("WARNING iavl/export Skipping Version lock for out of sync tree\n")
+	}
 	go exporter.export(ctx)
 
 	return exporter
@@ -83,7 +93,9 @@ func (e *Exporter) Close() {
 	for range e.ch { // drain channel
 	}
 	if e.tree != nil {
-		e.tree.ndb.decrVersionReaders(e.tree.version)
+		if e.tree.ndb != nil {
+			e.tree.ndb.decrVersionReaders(e.tree.version)
+		}
 	}
 	e.tree = nil
 }
