@@ -40,11 +40,6 @@ func newExporter(tree *ImmutableTree) *Exporter {
 	if tree == nil {
 		return nil
 	}
-	// CV Prevent crash on incrVersionReaders if tree.ndb == nil
-	if tree.ndb == nil {
-		fmt.Printf("iavl/export newExporter failed to create because tree.ndb is nil\n")
-		return nil
-	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	exporter := &Exporter{
@@ -97,7 +92,7 @@ func (e *Exporter) Close() {
 	e.cancel()
 	for range e.ch { // drain channel
 	}
-	if e.tree != nil {
+	if e.tree != nil && e.tree.ndb != nil {
 		e.tree.ndb.decrVersionReaders(e.tree.version)
 	}
 	e.tree = nil
