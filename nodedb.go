@@ -729,9 +729,11 @@ func (ndb *nodeDB) getLatestVersion() (int64, error) {
 		var err error
 		ndb.latestVersion, err = ndb.getPreviousVersion(1<<63 - 1)
 		if err != nil {
+			fmt.Printf("nodedb/glv default 0 \n")
 			return 0, err
 		}
 	}
+	fmt.Printf("nodedb/glv ndb.latestVersion: %d\n", ndb.latestVersion)
 	return ndb.latestVersion, nil
 }
 
@@ -759,13 +761,16 @@ func (ndb *nodeDB) getPreviousVersion(version int64) (int64, error) {
 	for ; itr.Valid(); itr.Next() {
 		k := itr.Key()
 		rootKeyFormat.Scan(k, &pversion)
+		fmt.Printf("noddb/previous version: %d\n", pversion)
 		return pversion, nil
 	}
 
 	if err := itr.Error(); err != nil {
+		fmt.Printf("noddb/previous version: 0, %s\n", err)
 		return 0, err
 	}
 
+	fmt.Printf("noddb/previous version: default 0\n")
 	return 0, nil
 }
 
