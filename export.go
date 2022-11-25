@@ -53,7 +53,12 @@ func newExporter(tree *ImmutableTree) *Exporter {
 		cancel: cancel,
 	}
 
-	tree.ndb.incrVersionReaders(tree.version)
+	// CV Prevent crash on incrVersionReaders if tree.ndb == nil (happens when  ree.root = nil)
+	if tree.ndb != nil {
+		tree.ndb.incrVersionReaders(tree.version)
+	} else {
+		fmt.Printf("WARNING iavl/export Skipping Version lock for out of sync tree\n")
+	}
 	go exporter.export(ctx)
 
 	return exporter
