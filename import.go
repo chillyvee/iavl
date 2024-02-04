@@ -27,6 +27,9 @@ type Importer struct {
 	batch     db.Batch
 	batchSize uint32
 	stack     []*Node
+
+	// Optimistic raw key value import
+	optimistic bool
 }
 
 // newImporter creates a new Importer for an empty MutableTree.
@@ -34,6 +37,17 @@ type Importer struct {
 // version should correspond to the version that was initially exported. It must be greater than
 // or equal to the highest ExportNode version number given.
 func newImporter(tree *MutableTree, version int64) (*Importer, error) {
+	return newImporterWithOptions(tree, version, false)
+}
+
+// newOptimisticImporter creates a new Importer for an empty MutableTree.
+//
+// expects optimistic raw key values for import
+func newOptimisticImporter(tree *MutableTree, version int64) (*Importer, error) {
+	return newImporterWithOptions(tree, version, true)
+}
+
+func newImporterWithOptions(tree *MutableTree, version int64, optimistic bool) (*Importer, error) {
 	if version < 0 {
 		return nil, errors.New("imported version cannot be negative")
 	}
@@ -45,10 +59,11 @@ func newImporter(tree *MutableTree, version int64) (*Importer, error) {
 	}
 
 	return &Importer{
-		tree:    tree,
-		version: version,
-		batch:   tree.ndb.db.NewBatch(),
-		stack:   make([]*Node, 0, 8),
+		tree:       tree,
+		version:    version,
+		batch:      tree.ndb.db.NewBatch(),
+		stack:      make([]*Node, 0, 8),
+		optimistic: optimistic,
 	}, nil
 }
 
@@ -62,10 +77,65 @@ func (i *Importer) Close() {
 	i.tree = nil
 }
 
+// sendBatchIfFull can be called during imports after each key add
+// automatically batch.Write() when pending writes > maxBatchSize
+func (i *Importer) sendBatchIfFull() error {
+	if i.batchSize >= maxBatchSize {
+		// Wait for previous batch.
+		var err error
+		if i.inflightCommit != nil {
+			err = <-i.inflightCommit
+			i.inflightCommit = nil
+		}
+		if err != nil {
+			return err
+		}
+		result := make(chan error)
+		i.inflightCommit = result
+		go func(batch db.Batch) {
+			defer batch.Close()
+			result <- batch.Write()
+		}(i.batch)
+		i.batch = i.tree.ndb.db.NewBatch()
+		i.batchSize = 0
+	}
+
+	return nil
+}
+
+// OptimisticAdd adds a TRUSTED leveldb key value pair WITHOUT verification
+func (i *Importer) OptimisticAdd(exportNode *ExportNode) error {
+	if i.tree == nil {
+		return ErrNoImport
+	}
+	if exportNode == nil {
+		return errors.New("node cannot be nil")
+	}
+	if exportNode.Key == nil {
+		return errors.New("node.Key cannot be nil")
+	}
+	if exportNode.Value == nil {
+		return errors.New("node.Value cannot be nil")
+	}
+
+	if err := i.batch.Set(i.tree.ndb.nodeKey(exportNode.Key), exportNode.Value); err != nil {
+		return err
+	}
+	i.batchSize++
+
+	i.sendBatchIfFull()
+
+	return nil
+}
+
 // Add adds an ExportNode to the import. ExportNodes must be added in the order returned by
 // Exporter, i.e. depth-first post-order (LRN). Nodes are periodically flushed to the database,
 // but the imported version is not visible until Commit() is called.
 func (i *Importer) Add(exportNode *ExportNode) error {
+	// Keep the same Add(node) API but run faster optimistic import when configured
+	if i.optimistic {
+		return i.OptimisticAdd(exportNode)
+	}
 	if i.tree == nil {
 		return ErrNoImport
 	}
@@ -170,18 +240,22 @@ func (i *Importer) Commit() error {
 		return ErrNoImport
 	}
 
-	switch len(i.stack) {
-	case 0:
-		if err := i.batch.Set(i.tree.ndb.rootKey(i.version), []byte{}); err != nil {
-			return err
+	if i.optimistic {
+		// All keys should be already imported
+	} else {
+		switch len(i.stack) {
+		case 0:
+			if err := i.batch.Set(i.tree.ndb.rootKey(i.version), []byte{}); err != nil {
+				return err
+			}
+		case 1:
+			if err := i.batch.Set(i.tree.ndb.rootKey(i.version), i.stack[0].hash); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("invalid node structure, found stack size %v when committing",
+				len(i.stack))
 		}
-	case 1:
-		if err := i.batch.Set(i.tree.ndb.rootKey(i.version), i.stack[0].hash); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("invalid node structure, found stack size %v when committing",
-			len(i.stack))
 	}
 
 	err := i.batch.WriteSync()
