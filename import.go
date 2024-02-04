@@ -29,7 +29,8 @@ type Importer struct {
 	stack     []*Node
 
 	// Optimistic raw key value import
-	optimistic bool
+	optimistic     bool
+	optimisticRoot *Node
 }
 
 // newImporter creates a new Importer for an empty MutableTree.
@@ -81,21 +82,11 @@ func (i *Importer) Close() {
 // automatically batch.Write() when pending writes > maxBatchSize
 func (i *Importer) sendBatchIfFull() error {
 	if i.batchSize >= maxBatchSize {
-		// Wait for previous batch.
-		var err error
-		if i.inflightCommit != nil {
-			err = <-i.inflightCommit
-			i.inflightCommit = nil
-		}
+		err := i.batch.Write()
 		if err != nil {
 			return err
 		}
-		result := make(chan error)
-		i.inflightCommit = result
-		go func(batch db.Batch) {
-			defer batch.Close()
-			result <- batch.Write()
-		}(i.batch)
+		i.batch.Close()
 		i.batch = i.tree.ndb.db.NewBatch()
 		i.batchSize = 0
 	}
@@ -118,7 +109,8 @@ func (i *Importer) OptimisticAdd(exportNode *ExportNode) error {
 		return errors.New("node.Value cannot be nil")
 	}
 
-	if err := i.batch.Set(i.tree.ndb.nodeKey(exportNode.Key), exportNode.Value); err != nil {
+	//if err := i.batch.Set(i.tree.ndb.nodeKey(exportNode.Key), exportNode.Value); err != nil {
+	if err := i.batch.Set(exportNode.Key, exportNode.Value); err != nil {
 		return err
 	}
 	i.batchSize++
@@ -243,7 +235,14 @@ func (i *Importer) Commit() error {
 	}
 
 	// Optimistic: All keys should be already imported
-	if !i.optimistic {
+	if i.optimistic {
+		//if err := i.batch.Set(i.tree.ndb.rootKey(i.version), i.stack[0].hash); err != nil {
+		/*
+			if err := i.batch.Set(i.tree.ndb.rootKey(i.version), []byte{}); err != nil {
+				return err
+			}
+		*/
+	} else {
 		switch len(i.stack) {
 		case 0:
 			if err := i.batch.Set(i.tree.ndb.rootKey(i.version), []byte{}); err != nil {

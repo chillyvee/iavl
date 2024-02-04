@@ -99,6 +99,19 @@ func (e *Exporter) export(ctx context.Context) {
 // optimisticExport exports raw key, value nodes
 // Cosmos-SDK should set different snapshot format so nodes can select between either "untrusted statesync" or "trusted-peer optimistic" import
 func (e *Exporter) optimisticExport(ctx context.Context) {
+	rootKeyBytes := e.tree.ndb.rootKey(e.tree.version)
+	rootValueBytes, err := e.tree.ndb.db.Get(rootKeyBytes)
+	if err != nil {
+		fmt.Printf("ERROR: failed get get rootNode\n")
+	}
+	exportNode := &ExportNode{
+		Key:     rootKeyBytes,
+		Value:   rootValueBytes,
+		Version: 0, // Version not used
+		Height:  0, // Height not used
+	}
+	e.ch <- exportNode
+
 	e.tree.root.traverse(e.tree, true, func(node *Node) bool {
 		// TODO: How to get the original db value bytes directly without writeBytes()?
 		buf := bufPool.Get().(*bytes.Buffer)
@@ -114,7 +127,7 @@ func (e *Exporter) optimisticExport(ctx context.Context) {
 
 		// Use Export Node Format.
 		exportNode := &ExportNode{
-			Key:     node.GetKey(), // TODO: How to get prefixed key so that import does not need to prefix?
+			Key:     e.tree.ndb.nodeKey(node.hash), // TODO: How to get prefixed key so that import does not need to prefix?
 			Value:   bytesCopy,
 			Version: 0, // Version not used
 			Height:  0, // Height not used
@@ -127,6 +140,7 @@ func (e *Exporter) optimisticExport(ctx context.Context) {
 			return true
 		}
 	})
+
 	close(e.ch)
 }
 

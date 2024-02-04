@@ -249,7 +249,8 @@ func TestImporter_OptimisticAdd(t *testing.T) {
 	for desc, tc := range testcases {
 		tc := tc // appease scopelint
 		t.Run(desc, func(t *testing.T) {
-			tree := NewMutableTree(dbm.NewMemDB(), 0, false, log.NewNopLogger())
+			tree, err := NewMutableTree(db.NewMemDB(), 0, false)
+			require.NoError(t, err)
 			importer, err := tree.Import(1)
 			require.NoError(t, err)
 			defer importer.Close()
