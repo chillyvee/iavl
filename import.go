@@ -123,7 +123,9 @@ func (i *Importer) OptimisticAdd(exportNode *ExportNode) error {
 	}
 	i.batchSize++
 
-	i.sendBatchIfFull()
+	if err := i.sendBatchIfFull(); err != nil {
+		return errors.New("failed sending db write batch")
+	}
 
 	return nil
 }
@@ -240,9 +242,8 @@ func (i *Importer) Commit() error {
 		return ErrNoImport
 	}
 
-	if i.optimistic {
-		// All keys should be already imported
-	} else {
+	// Optimistic: All keys should be already imported
+	if !i.optimistic {
 		switch len(i.stack) {
 		case 0:
 			if err := i.batch.Set(i.tree.ndb.rootKey(i.version), []byte{}); err != nil {
